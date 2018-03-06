@@ -14,6 +14,7 @@
 """
 Code for training
 """
+import numba.cuda as cuda
 import glob
 import logging
 import os
@@ -364,6 +365,12 @@ class TrainingModel(model.SockeyeModel):
                     (max_num_epochs is not None and train_state.epoch == max_num_epochs):
                 logger.info("Maximum # of updates (%s) or epochs (%s) reached.", max_updates, max_num_epochs)
                 break
+
+            if train_state.updates == 501:
+                cuda.profile_start()
+
+            if train_state.updates == 511:
+                cuda.profile_stop()
 
             # process batch
             batch = next_data_batch

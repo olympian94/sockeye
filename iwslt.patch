@@ -1,0 +1,121 @@
+diff --git a/arxiv/code/env.sh b/arxiv/code/env.sh
+index d640826..6e7315b 100644
+--- a/arxiv/code/env.sh
++++ b/arxiv/code/env.sh
+@@ -8,14 +8,14 @@ SOURCE=$(echo $PAIR | cut -d- -f1)
+ TARGET=$(echo $PAIR | cut -d- -f2)
+ 
+ # Path to Moses (used for detokenization, validation score)
+-MOSES=/path/to/moses
++MOSES=/home/ab/mosesdecoder
+ 
+ # Path to BPE
+-BPE=/path/to/subword-nmt
++BPE=/home/ab/subword-nmt
+ 
+ # Toolkit Paths
+ MARIAN=/path/to/marian
+-SOCKEYE=/path/to/sockeye
++SOCKEYE=/home/ab/sockeye_arxiv1217
+ FAIRSEQ=/path/to/fairseq-py
+ NEMATUS=/path/to/nematus
+ OPENNMT=/path/to/opennmt
+diff --git a/sockeye/callback.py b/sockeye/callback.py
+index 2878fe6..161d712 100644
+--- a/sockeye/callback.py
++++ b/sockeye/callback.py
+@@ -64,13 +64,15 @@ class TrainingMonitor(object):
+         self.start_tic = time.time()
+         self.summary_writer = None
+         if use_tensorboard:
+-            import tensorboard  # pylint: disable=import-error
++            # import tensorboard  # pylint: disable=import-error
++            import tensorflow
+             log_dir = os.path.join(output_folder, C.TENSORBOARD_NAME)
+             if os.path.exists(log_dir):
+                 logger.info("Deleting existing tensorboard log dir %s", log_dir)
+                 shutil.rmtree(log_dir)
+             logger.info("Logging training events for Tensorboard at '%s'", log_dir)
+-            self.summary_writer = tensorboard.FileWriter(log_dir)
++            #self.summary_writer = tensorboard.FileWriter(log_dir)
++            self.summary_writer = tensorflow.summary.FileWriter(log_dir)
+         self.cp_decoder = cp_decoder
+         self.ctx = mp.get_context('spawn') # type: ignore
+         self.num_concurrent_decodes = num_concurrent_decodes
+@@ -282,8 +284,11 @@ def write_tensorboard(summary_writer,
+     :param metrics: Mapping of metric names to their values.
+     :param checkpoint: Current checkpoint.
+     """
+-    from tensorboard.summary import scalar  # pylint: disable=import-error
++    #from tensorboard.summary import scalar  # pylint: disable=import-error
++    import tensorflow
+     for name, value in metrics.items():
+-        summary_writer.add_summary(
+-            scalar(
+-                name=name, scalar=value), global_step=checkpoint)
++        #summary_writer.add_summary(
++        #    scalar(
++        #        name=name, scalar=value), global_step=checkpoint)
++        smry = tensorflow.Summary(value=[tensorflow.Summary.Value(tag=name, simple_value=value)])
++        summary_writer.add_summary(smry, global_step=checkpoint)
+diff --git a/sockeye/data_io.py b/sockeye/data_io.py
+index 2741dd9..fdc0cb8 100644
+--- a/sockeye/data_io.py
++++ b/sockeye/data_io.py
+@@ -272,6 +272,11 @@ def read_content(path: str, limit: Optional[int] = None) -> Iterator[List[str]]:
+     """
+     with smart_open(path) as indata:
+         for i, line in enumerate(indata):
++            # Ignore the line that has only one "."
++            if line == "\n" or line == ".\n":
++                print("[INFO]Empty line ignored, line number: ", i)
++                continue;
++
+             if limit is not None and i == limit:
+                 break
+             yield list(get_tokens(line))
+diff --git a/sockeye/train.py b/sockeye/train.py
+index 017d61d..7e126e0 100644
+--- a/sockeye/train.py
++++ b/sockeye/train.py
+@@ -57,12 +57,15 @@ def none_if_negative(val):
+ 
+ def _build_or_load_vocab(existing_vocab_path: Optional[str], data_paths: List[str], num_words: int,
+                          word_min_count: int) -> Dict:
++    vocabulary = vocab.build_from_paths(paths=[existing_vocab_path], num_words=num_words, min_count=word_min_count)
++    '''
+     if existing_vocab_path is None:
+         vocabulary = vocab.build_from_paths(paths=data_paths,
+                                             num_words=num_words,
+                                             min_count=word_min_count)
+     else:
+         vocabulary = vocab.vocab_from_json(existing_vocab_path)
++    '''
+     return vocabulary
+ 
+ 
+diff --git a/sockeye/training.py b/sockeye/training.py
+index 25e26db..21ee5d2 100644
+--- a/sockeye/training.py
++++ b/sockeye/training.py
+@@ -14,6 +14,7 @@
+ """
+ Code for training
+ """
++import numba.cuda as cuda
+ import glob
+ import logging
+ import os
+@@ -365,6 +366,12 @@ class TrainingModel(model.SockeyeModel):
+                 logger.info("Maximum # of updates (%s) or epochs (%s) reached.", max_updates, max_num_epochs)
+                 break
+ 
++            if train_state.updates == 501:
++                cuda.profile_start()
++
++            if train_state.updates == 511:
++                cuda.profile_stop()
++
+             # process batch
+             batch = next_data_batch
+ 
