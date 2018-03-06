@@ -420,11 +420,6 @@ class TrainingModel(model.SockeyeModel):
             metric_opt_upd_overhead += metric_opt_update_end_t - metric_opt_update_start_t
 
             # Call optimizer to update weights given gradients, current state
-            # With gluon the 'Trainer' recognizes multi device training and synchronizes grads,
-            # maybe this update call does that.[Abhishek]
-	    #Trail goes such : update()-> mxnet/module/module.py update() -> mxnet/model.py functions to 
-	    #update_kvstore kvstore which use push/pull ops ie. synchronization. [Abhishek]
-
             wt_upd_start_t = time.time()
             self.module.update()
             wt_upd_end_t = time.time()
