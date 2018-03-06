@@ -667,6 +667,9 @@ def main():
                         "the --monitor-bleu argument.")
             monitor_bleu = -1
 
+        import time
+        import datetime
+        start_t = time.time()
         training_model.fit(train_iter, eval_iter,
                            output_folder=output_folder,
                            max_params_files_to_keep=args.keep_last_params,
@@ -686,6 +689,8 @@ def main():
                            mxmonitor_stat_func=args.monitor_stat_func,
                            lr_decay_param_reset=args.learning_rate_decay_param_reset,
                            lr_decay_opt_states_reset=args.learning_rate_decay_optimizer_states_reset)
+        end_t = time.time()
+        print('@@Total=',end_t-start_t)
 
 
 if __name__ == "__main__":
