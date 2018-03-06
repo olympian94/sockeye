@@ -272,6 +272,11 @@ def read_content(path: str, limit: Optional[int] = None) -> Iterator[List[str]]:
     """
     with smart_open(path) as indata:
         for i, line in enumerate(indata):
+            # Ignore the line that has only one "."
+            if line == "\n" or line == ".\n":
+                print("[INFO]Empty line ignored, line number: ", i)
+                continue;
+
             if limit is not None and i == limit:
                 break
             yield list(get_tokens(line))

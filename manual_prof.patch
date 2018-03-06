@@ -1,0 +1,199 @@
+diff --git a/sockeye/train.py b/sockeye/train.py
+index 7e126e0..58be891 100644
+--- a/sockeye/train.py
++++ b/sockeye/train.py
+@@ -667,6 +667,11 @@ def main():
+                         "the --monitor-bleu argument.")
+             monitor_bleu = -1
+ 
++        import time
++        import datetime
++        start_t = time.time()
++        print('@@train.py_start=',
++              datetime.datetime.fromtimestamp(start_t).strftime('%Y-%m-%d %H:%M:%S'))
+         training_model.fit(train_iter, eval_iter,
+                            output_folder=output_folder,
+                            max_params_files_to_keep=args.keep_last_params,
+@@ -686,6 +691,10 @@ def main():
+                            mxmonitor_stat_func=args.monitor_stat_func,
+                            lr_decay_param_reset=args.learning_rate_decay_param_reset,
+                            lr_decay_opt_states_reset=args.learning_rate_decay_optimizer_states_reset)
++        end_t = time.time()
++        print('@@train.py_end=',
++              datetime.datetime.fromtimestamp(end_t).strftime('%Y-%m-%d %H:%M:%S'))
++        print('@@Total=',end_t-start_t)
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/sockeye/training.py b/sockeye/training.py
+index 21ee5d2..e148537 100644
+--- a/sockeye/training.py
++++ b/sockeye/training.py
+@@ -15,6 +15,8 @@
+ Code for training
+ """
+ import numba.cuda as cuda
++import datetime
++
+ import glob
+ import logging
+ import os
+@@ -257,6 +259,12 @@ class TrainingModel(model.SockeyeModel):
+             logger.info("Installed MXNet monitor; pattern='%s'; statistics_func='%s'",
+                         mxmonitor_pattern, mxmonitor_stat_func)
+ 
++        fit_start_t = time.time()
++        print('@@_fit_start=',
++              datetime.datetime.fromtimestamp(fit_start_t).strftime('%Y-%m-%d %H:%M:%S'))
++        #import yappi
++        #yappi.set_clock_type('cpu')
++        #yappi.start(builtins=True)
+         self._fit(train_iter, val_iter, output_folder,
+                   kvstore=kvstore,
+                   max_params_files_to_keep=max_params_files_to_keep,
+@@ -269,6 +277,12 @@ class TrainingModel(model.SockeyeModel):
+                   mxmonitor=monitor,
+                   lr_decay_param_reset=lr_decay_param_reset,
+                   lr_decay_opt_states_reset=lr_decay_opt_states_reset)
++        #stats = yappi.get_func_stats()
++        #stats.save('rnn_calgrind.out', type='callgrind')
++        fit_end_t = time.time()
++        print('@@_fit_end=',
++              datetime.datetime.fromtimestamp(fit_end_t).strftime('%Y-%m-%d %H:%M:%S'))
++        print('@@_fit=',fit_end_t - fit_start_t)
+ 
+         logger.info("Training finished. Best checkpoint: %d. Best validation %s: %.6f",
+                     self.training_monitor.get_best_checkpoint(),
+@@ -356,7 +370,22 @@ class TrainingModel(model.SockeyeModel):
+ 
+         next_data_batch = train_iter.next()
+ 
++        # define all measurement counters
++        forward_backward_time=0
++        synchronization_overhead=0
++        eval_overhead=0
++        prep_next_overhead = 0
++        metric_opt_upd_overhead = 0
++
++        loop_start_t = time.time()
++        print('@@loop_start=',
++              datetime.datetime.fromtimestamp(loop_start_t
++                  ).strftime('%Y-%m-%d %H:%M:%S'))
++        iter_ctr = 0
+         while True:
++            print('@@Iter=',iter_ctr+1)
++            iter_ctr+=1
++
+             if not train_iter.iter_next():
+                 train_state.epoch += 1
+                 train_iter.reset()
+@@ -366,11 +395,11 @@ class TrainingModel(model.SockeyeModel):
+                 logger.info("Maximum # of updates (%s) or epochs (%s) reached.", max_updates, max_num_epochs)
+                 break
+ 
+-            if train_state.updates == 501:
+-                cuda.profile_start()
++            #if train_state.updates == 501:
++            #    cuda.profile_start()
+ 
+-            if train_state.updates == 511:
+-                cuda.profile_stop()
++            #if train_state.updates == 511:
++            #    cuda.profile_stop()
+ 
+             # process batch
+             batch = next_data_batch
+@@ -379,8 +408,19 @@ class TrainingModel(model.SockeyeModel):
+                 mxmonitor.tic()
+ 
+             # Forward-backward to get outputs, gradients
+-            self.module.forward_backward(batch)
++            fwdbwd_start_t = time.time()
+ 
++            print('@@fwdbwd_start=',
++                 datetime.datetime.fromtimestamp(fwdbwd_start_t ).strftime('%Y-%m-%d %H:%M:%S'))
++            self.module.forward_backward(batch)
++            fwdbwd_end_t = time.time()
++            print('@@fwdbwd_end=',
++                 datetime.datetime.fromtimestamp(fwdbwd_end_t ).strftime('%Y-%m-%d %H:%M:%S'))
++            forward_backward_time += fwdbwd_end_t - fwdbwd_start_t
++            
++            metric_opt_update_start_t = time.time()
++            print('@@met_opt_upd_start=',
++                 datetime.datetime.fromtimestamp(metric_opt_update_start_t ).strftime('%Y-%m-%d %H:%M:%S'))
+             # Update aggregate training loss
+             self.module.update_metric(metric_train, batch.label)
+ 
+@@ -393,10 +433,29 @@ class TrainingModel(model.SockeyeModel):
+                 [(_, m_val)] = metric_loss.get_name_value()
+                 batch_state = BatchState(metric_val=m_val)
+                 optimizer.pre_update_batch(batch_state)
++            metric_opt_update_end_t = time.time()
++            print('@@met_opt_upd_end=',
++                 datetime.datetime.fromtimestamp(metric_opt_update_end_t).strftime('%Y-%m-%d %H:%M:%S'))
++            metric_opt_upd_overhead += metric_opt_update_end_t - metric_opt_update_start_t
+ 
+             # Call optimizer to update weights given gradients, current state
++            # With gluon the 'Trainer' recognizes multi device training and synchronizes grads,
++            # maybe this update call does that.[Abhishek]
++	    #Trail goes such : update()-> mxnet/module/module.py update() -> mxnet/model.py functions to 
++	    #update_kvstore kvstore which use push/pull ops ie. synchronization. [Abhishek]
++
++            wt_upd_start_t = time.time()
++            print('@@wt_upd_start=',
++                 datetime.datetime.fromtimestamp(wt_upd_start_t).strftime('%Y-%m-%d %H:%M:%S'))
+             self.module.update()
+-
++            wt_upd_end_t = time.time()
++            print('@@wt_upd_end=',
++                 datetime.datetime.fromtimestamp(wt_upd_end_t).strftime('%Y-%m-%d %H:%M:%S'))
++            synchronization_overhead += wt_upd_end_t - wt_upd_start_t
++
++            prep_next_start_t = time.time()
++            print('@@prep_next_start=',
++                 datetime.datetime.fromtimestamp(prep_next_start_t).strftime('%Y-%m-%d %H:%M:%S'))
+             if mxmonitor is not None:
+                 results = mxmonitor.toc()
+                 if results:
+@@ -411,6 +470,14 @@ class TrainingModel(model.SockeyeModel):
+             self.training_monitor.batch_end_callback(train_state.epoch, train_state.updates, metric_train)
+             train_state.updates += 1
+             train_state.samples += train_iter.batch_size
++            prep_next_end_t = time.time()
++            print('@@prep_next_end=',
++                 datetime.datetime.fromtimestamp(prep_next_end_t).strftime('%Y-%m-%d %H:%M:%S'))
++            prep_next_overhead += prep_next_end_t - prep_next_start_t
++
++            eval_start_t = time.time()
++            print('@@eval_start=',
++                 datetime.datetime.fromtimestamp(eval_start_t).strftime('%Y-%m-%d %H:%M:%S'))
+ 
+             if train_state.updates > 0 and train_state.updates % checkpoint_frequency == 0:
+                 train_state.checkpoint += 1
+@@ -491,11 +558,26 @@ class TrainingModel(model.SockeyeModel):
+                         break
+ 
+                 self._checkpoint(train_state, output_folder, train_iter)
++            eval_end_t = time.time()
++            print('@@eval_end=',
++                 datetime.datetime.fromtimestamp(eval_end_t).strftime('%Y-%m-%d %H:%M:%S'))
++            eval_overhead += eval_end_t - eval_start_t
++
++        loop_end_t = time.time()
++        print('@@loop_end=',
++             datetime.datetime.fromtimestamp(loop_end_t).strftime('%Y-%m-%d %H:%M:%S'))
++        print('@@loop=', loop_end_t-loop_start_t)
+ 
+         cleanup_params_files(output_folder, max_params_files_to_keep,
+                              train_state.checkpoint, self.training_monitor.get_best_checkpoint())
+ 
+         logger.info('Training stopped')
++        print('@@fbt=',forward_backward_time)
++        print('@@sync=',synchronization_overhead)
++        print('@@eval=', eval_overhead)
++        print('@@prep_next=',prep_next_overhead)
++        print('@@metric_opti_upd=',metric_opt_upd_overhead)
++
+         self.training_monitor.stop_fit_callback()
+         final_training_state_dirname = os.path.join(output_folder, C.TRAINING_STATE_DIRNAME)
+         if os.path.exists(final_training_state_dirname):
