@@ -14,8 +14,8 @@
 """
 Code for training
 """
-import numba.cuda as cuda
-import datetime
+# import numba.cuda as cuda
+# import datetime
 
 import glob
 import logging
@@ -259,9 +259,9 @@ class TrainingModel(model.SockeyeModel):
             logger.info("Installed MXNet monitor; pattern='%s'; statistics_func='%s'",
                         mxmonitor_pattern, mxmonitor_stat_func)
 
-        import yappi
-        yappi.set_clock_type('cpu')
-        yappi.start(builtins=True)
+        # import yappi
+        # yappi.set_clock_type('cpu')
+        # yappi.start(builtins=True)
         fit_start_t = time.time()
         self._fit(train_iter, val_iter, output_folder,
                   kvstore=kvstore,
@@ -276,9 +276,9 @@ class TrainingModel(model.SockeyeModel):
                   lr_decay_param_reset=lr_decay_param_reset,
                   lr_decay_opt_states_reset=lr_decay_opt_states_reset)
         fit_end_t = time.time()
-        print('@@_fit=',fit_end_t - fit_start_t)
-        stats = yappi.get_func_stats()
-        stats.save('callgrind.out', type='callgrind')
+        print('@@_Fit_Function_Call_Time=', fit_end_t - fit_start_t)
+        # stats = yappi.get_func_stats()
+        # stats.save('callgrind.out', type='callgrind')
 
         logger.info("Training finished. Best checkpoint: %d. Best validation %s: %.6f",
                     self.training_monitor.get_best_checkpoint(),
@@ -343,6 +343,8 @@ class TrainingModel(model.SockeyeModel):
         if isinstance(optimizer, SockeyeOptimizer):
             # Select training loss or optimized metric
             if optimizer.request_optimized_metric:
+                # [Abhishek] When we pass '--optimized-metric bleu' this section is activated
+                # we are asking sockeye to explicitly track bleu scores
                 metric_loss = self.create_eval_metric(self.training_monitor.optimized_metric)
             else:
                 metric_loss = loss.get_loss(self.config.config_loss).create_metric()
@@ -366,15 +368,15 @@ class TrainingModel(model.SockeyeModel):
 
         next_data_batch = train_iter.next()
 
-        # define all measurement counters
-        forward_backward_time=0
-        synchronization_overhead=0
-        eval_overhead=0
-        prep_next_overhead = 0
-        metric_opt_upd_overhead = 0
+        # define all measurement counters, in order of usage
+        training_loop_overhead = 0
+        forward_backward_overhead = 0
+        update_loss_metric_overhead = 0
+        weight_update_overhead = 0
+        prepare_next_batch_overhead = 0
+        checkpointing_overhead = 0
 
         loop_start_t = time.time()
-        iter_ctr = 0
         while True:
             if not train_iter.iter_next():
                 train_state.epoch += 1
@@ -385,25 +387,30 @@ class TrainingModel(model.SockeyeModel):
                 logger.info("Maximum # of updates (%s) or epochs (%s) reached.", max_updates, max_num_epochs)
                 break
 
-            #if train_state.updates == 501:
-            #    cuda.profile_start()
+            # if train_state.updates == 501:
+            #     cuda.profile_start()
 
-            #if train_state.updates == 511:
-            #    cuda.profile_stop()
+            # if train_state.updates == 511:
+            #     cuda.profile_stop()
 
             # process batch
             batch = next_data_batch
 
+            # [Abhishek] tic(), toc() supposedly call wait_to_read() on all argument and aux-arrays so
+            # they are like synchronization points. To enable them we must run sockeye with
+            # '--monitor-pattern '.*' ' (monitor every parameter). It monitors all outputs/weights/gradients
+            # according to 'sockeye.train --help' string.
             if mxmonitor is not None:
                 mxmonitor.tic()
 
-            # Forward-backward to get outputs, gradients
+            mx.ndarray.waitall()
             fwdbwd_start_t = time.time()
+            # Forward-backward to get outputs, gradients
             self.module.forward_backward(batch)
             fwdbwd_end_t = time.time()
-            forward_backward_time += fwdbwd_end_t - fwdbwd_start_t
-            
-            metric_opt_update_start_t = time.time()
+            forward_backward_overhead += fwdbwd_end_t - fwdbwd_start_t
+
+            loss_metric_upd_start_t = time.time()
             # Update aggregate training loss
             self.module.update_metric(metric_train, batch.label)
 
@@ -416,14 +423,15 @@ class TrainingModel(model.SockeyeModel):
                 [(_, m_val)] = metric_loss.get_name_value()
                 batch_state = BatchState(metric_val=m_val)
                 optimizer.pre_update_batch(batch_state)
-            metric_opt_update_end_t = time.time()
-            metric_opt_upd_overhead += metric_opt_update_end_t - metric_opt_update_start_t
+
+            loss_metric_upd_end_t = time.time()
+            update_loss_metric_overhead += loss_metric_upd_end_t - loss_metric_upd_start_t
 
             # Call optimizer to update weights given gradients, current state
             wt_upd_start_t = time.time()
             self.module.update()
             wt_upd_end_t = time.time()
-            synchronization_overhead += wt_upd_end_t - wt_upd_start_t
+            weight_update_overhead += wt_upd_end_t - wt_upd_start_t
 
             prep_next_start_t = time.time()
             if mxmonitor is not None:
@@ -441,7 +449,7 @@ class TrainingModel(model.SockeyeModel):
             train_state.updates += 1
             train_state.samples += train_iter.batch_size
             prep_next_end_t = time.time()
-            prep_next_overhead += prep_next_end_t - prep_next_start_t
+            prepare_next_batch_overhead += prep_next_end_t - prep_next_start_t
 
             eval_start_t = time.time()
             if train_state.updates > 0 and train_state.updates % checkpoint_frequency == 0:
@@ -524,21 +532,30 @@ class TrainingModel(model.SockeyeModel):
 
                 self._checkpoint(train_state, output_folder, train_iter)
             eval_end_t = time.time()
-            eval_overhead += eval_end_t - eval_start_t
+            checkpointing_overhead += eval_end_t - eval_start_t
 
         loop_end_t = time.time()
-        print('@@loop=', loop_end_t-loop_start_t)
+        training_loop_overhead = loop_end_t - loop_start_t
+        print('@@Timing Counter Results in order of operation...')
+        print('@@Model_Fiting_Loop_Time=', training_loop_overhead)
+        print('@@Forward_Backward_Passes_Time=', forward_backward_overhead)
+        print('@@Update_Loss_Metric_Time=', update_loss_metric_overhead)
+        print('@@Weight_Update_Time=', weight_update_overhead)
+        print('@@Prepare_Next_Bacth_Time=', prepare_next_batch_overhead)
+        # [Abhishek] Note that this timer below doesnt capture actual checkpointing time because the process which
+        # runs the model on validation set is spawned to work in parallel with the next iteration of training
+        # loop (ie. next forward-backward pass). And as we can see, in the lines below we call stop_fit_callback
+        # which waits for the validation pass process to finish.
+        print('@@Validation_Set_Evaluation_and_Checkpointing_Time=',
+              checkpointing_overhead)
 
         cleanup_params_files(output_folder, max_params_files_to_keep,
                              train_state.checkpoint, self.training_monitor.get_best_checkpoint())
 
         logger.info('Training stopped')
-        print('@@fbt=',forward_backward_time)
-        print('@@sync=',synchronization_overhead)
-        print('@@eval=', eval_overhead)
-        print('@@prep_next=',prep_next_overhead)
-        print('@@metric_opti_upd=',metric_opt_upd_overhead)
 
+        # [Abhishek] 'stop_fit_callback' calls 'join()' on all decoder processes spawned for evaluation of model
+        # on validation set
         self.training_monitor.stop_fit_callback()
         final_training_state_dirname = os.path.join(output_folder, C.TRAINING_STATE_DIRNAME)
         if os.path.exists(final_training_state_dirname):
