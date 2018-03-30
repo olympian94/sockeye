@@ -226,6 +226,7 @@ class TrainingModel(model.SockeyeModel):
         if 'dist' in kvstore:
             self._check_dist_kvstore_requirements(lr_decay_opt_states_reset, lr_decay_param_reset, optimizer)
 
+        logger.info('@Starting fit() bind.')
         self.module.bind(data_shapes=train_iter.provide_data, label_shapes=train_iter.provide_label,
                          for_training=True, force_rebind=True, grad_req='write')
         self.module.symbol.save(os.path.join(output_folder, C.SYMBOL_NAME))
@@ -235,6 +236,7 @@ class TrainingModel(model.SockeyeModel):
         self._log_params()
 
         self.module.init_optimizer(kvstore=kvstore, optimizer=optimizer, optimizer_params=optimizer_params)
+
 
         cp_decoder = checkpoint_decoder.CheckpointDecoder(self.context[-1],
                                                           self.config.config_data.validation_source,
