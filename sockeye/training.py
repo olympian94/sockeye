@@ -376,6 +376,7 @@ class TrainingModel(model.SockeyeModel):
         prepare_next_batch_overhead = 0
         checkpointing_overhead = 0
 
+        mx.ndarray.waitall()
         loop_start_t = time.time()
         while True:
             if not train_iter.iter_next():
@@ -407,6 +408,7 @@ class TrainingModel(model.SockeyeModel):
             fwdbwd_start_t = time.time()
             # Forward-backward to get outputs, gradients
             self.module.forward_backward(batch)
+            mx.ndarray.waitall()
             fwdbwd_end_t = time.time()
             forward_backward_overhead += fwdbwd_end_t - fwdbwd_start_t
 
@@ -424,12 +426,14 @@ class TrainingModel(model.SockeyeModel):
                 batch_state = BatchState(metric_val=m_val)
                 optimizer.pre_update_batch(batch_state)
 
+            mx.ndarray.waitall()
             loss_metric_upd_end_t = time.time()
             update_loss_metric_overhead += loss_metric_upd_end_t - loss_metric_upd_start_t
 
             # Call optimizer to update weights given gradients, current state
             wt_upd_start_t = time.time()
             self.module.update()
+            mx.ndarray.waitall()
             wt_upd_end_t = time.time()
             weight_update_overhead += wt_upd_end_t - wt_upd_start_t
 
@@ -448,6 +452,7 @@ class TrainingModel(model.SockeyeModel):
             self.training_monitor.batch_end_callback(train_state.epoch, train_state.updates, metric_train)
             train_state.updates += 1
             train_state.samples += train_iter.batch_size
+            mx.ndarray.waitall()
             prep_next_end_t = time.time()
             prepare_next_batch_overhead += prep_next_end_t - prep_next_start_t
 
@@ -531,9 +536,11 @@ class TrainingModel(model.SockeyeModel):
                         break
 
                 self._checkpoint(train_state, output_folder, train_iter)
+            mx.ndarray.waitall()
             eval_end_t = time.time()
             checkpointing_overhead += eval_end_t - eval_start_t
 
+        mx.ndarray.waitall()
         loop_end_t = time.time()
         training_loop_overhead = loop_end_t - loop_start_t
         print('@@Timing Counter Results in order of operation...')
