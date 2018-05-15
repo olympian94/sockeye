@@ -172,12 +172,20 @@ def load_or_create_vocabs(source_paths: List[str],
 
     if shared_vocab:
         if source_vocab_path and target_vocab_path:
-            vocab_source = vocab_from_json(source_vocab_path)
-            vocab_target = vocab_from_json(target_vocab_path)
-            utils.check_condition(are_identical(vocab_source, vocab_target),
-                                  "Shared vocabulary requires identical source and target vocabularies. "
-                                  "The vocabularies in %s and %s are not identical." % (source_vocab_path,
-                                                                                        target_vocab_path))
+            #vocab_source = vocab_from_json(source_vocab_path)
+            #vocab_target = vocab_from_json(target_vocab_path)
+            #utils.check_condition(are_identical(vocab_source, vocab_target),
+            #                      "Shared vocabulary requires identical source and target vocabularies. "
+            #                      "The vocabularies in %s and %s are not identical." % (source_vocab_path,
+            #                                                                            target_vocab_path))
+            utils.check_condition(num_words_source == num_words_target,
+                                  "A shared vocabulary requires the number of source and target words to be the same.")
+            utils.check_condition(word_min_count_source == word_min_count_target,
+                                  "A shared vocabulary requires the minimum word count for source and target "
+                                  "to be the same.")
+            vocab_source = vocab_target = build_from_paths(paths=[source_path, target_path],
+                                                           num_words=num_words_source,
+                                                           min_count=word_min_count_source)
 
         elif source_vocab_path is None and target_vocab_path is None:
             utils.check_condition(num_words_source == num_words_target,

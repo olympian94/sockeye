@@ -1045,7 +1045,7 @@ class SequenceReader(Iterator):
             sequence = tokens2ids(tokens, self.vocab)
         else:
             sequence = strids2ids(tokens)
-        check_condition(bool(sequence), "Empty sequence in file %s" % self.path)
+        #check_condition(bool(sequence), "Empty sequence in file %s" % self.path)
 
         if vocab is not None and self.add_bos:
             sequence.insert(0, self.vocab[C.BOS_SYMBOL])

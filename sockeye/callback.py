@@ -69,7 +69,9 @@ class TrainingMonitor(object):
                 logger.info("Deleting existing tensorboard log dir %s", log_dir)
                 shutil.rmtree(log_dir)
             logger.info("Logging training events for Tensorboard at '%s'", log_dir)
-            self.summary_writer = tensorboard.FileWriter(log_dir)
+            #self.summary_writer = tensorboard.FileWriter(log_dir)
+            import tensorflow
+            self.summary_writer = tensorflow.summary.FileWriter(log_dir)
         self.cp_decoder = cp_decoder
         self.ctx = mp.get_context('spawn')  # type: ignore
         self.decoder_metric_queue = self.ctx.Queue()
@@ -287,8 +289,11 @@ def write_tensorboard(summary_writer,
     except ImportError:
         raise RuntimeError("Please install tensorboard.")
     for name, value in metrics.items():
-        summary_writer.add_summary(
-            scalar(
-                name=name, scalar=value), global_step=checkpoint)
+        #summary_writer.add_summary(
+        #    scalar(
+        #        name=name, scalar=value), global_step=checkpoint)
+        import tensorflow
+        smry = tensorflow.Summary(value=[tensorflow.Summary.Value(tag=name, simple_value=value)])
+        summary_writer.add_summary(smry, global_step=checkpoint)
 
 
